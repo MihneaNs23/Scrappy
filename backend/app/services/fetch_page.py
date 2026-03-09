@@ -20,27 +20,45 @@ DEFAULT_HEADERS = {
 
 
 def normalize_url(url: str) -> str:
-    parsed = urlparse(url)
+    parsed = urlparse(url.strip())
     if not parsed.scheme:
-        return "https://" + url
-    return url
+        return "https://" + url.strip()
+    return url.strip()
 
 
-def looks_like_blocked_page(html: str) -> bool:
+def looks_strongly_blocked(html: str) -> bool:
     lower = html.lower()
 
-    indicators = [
-        "enable javascript",
-        "please enable javascript",
-        "access denied",
-        "forbidden",
-        "captcha",
+    strong_indicators = [
         "verify you are human",
-        "bot detection",
-        "cloudflare",
+        "captcha",
+        "cf-challenge",
+        "attention required",
+        "why did this happen",
+        "access denied",
+        "temporarily blocked",
+        "bot verification",
+        "press and hold",
     ]
 
-    return any(indicator in lower for indicator in indicators)
+    return any(indicator in lower for indicator in strong_indicators)
+
+
+def looks_like_tiny_js_shell(html: str) -> bool:
+    lower = html.lower().strip()
+
+    if len(lower) > 700:
+        return False
+
+    shell_markers = [
+        '<div id="app"></div>',
+        '<div id="root"></div>',
+        "__next",
+        "enable javascript",
+        "loading...",
+    ]
+
+    return any(marker in lower for marker in shell_markers)
 
 
 async def fetch_with_httpx(url: str) -> str:
@@ -60,8 +78,14 @@ async def fetch_with_httpx(url: str) -> str:
 
         html = response.text
 
-        if len(html) < 1000 or looks_like_blocked_page(html):
-            raise ValueError("Page likely blocked or JS-rendered")
+        if len(html) < 300:
+            raise ValueError("Returned HTML was too small")
+
+        if looks_strongly_blocked(html) and len(html) < 5000:
+            raise ValueError("Page appears strongly blocked or protected")
+
+        if looks_like_tiny_js_shell(html):
+            raise ValueError("Page appears to be a tiny JS shell")
 
         return html
 
@@ -85,16 +109,19 @@ def fetch_with_playwright_sync(url: str) -> str:
             )
 
             page = context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            page.wait_for_timeout(1000)
+            page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_timeout(1500)
 
             html = page.content()
 
             context.close()
             browser.close()
 
-            if len(html) < 500:
+            if len(html) < 400:
                 raise ValueError("Playwright returned very small page")
+
+            if looks_strongly_blocked(html) and len(html) < 5000:
+                raise ValueError("Playwright page appears strongly blocked")
 
             return html
 

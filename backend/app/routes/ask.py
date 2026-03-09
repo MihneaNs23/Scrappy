@@ -1,22 +1,27 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from app.models.schemas import AskRequest, AskResponse
 from app.services.answer_question import answer_question
 from app.services.page_cache import get_cached_page
 
 router = APIRouter()
 
 
-@router.post("/ask", response_model=AskResponse)
+class AskRequest(BaseModel):
+    url: str
+    question: str
+
+
+@router.post("/ask")
 async def ask_page(request: AskRequest):
     try:
         normalized_url = request.url.strip()
-        question = request.question.strip()
+        cleaned_question = request.question.strip()
 
         if not normalized_url:
             raise HTTPException(status_code=400, detail="URL is required.")
 
-        if not question:
+        if not cleaned_question:
             raise HTTPException(status_code=400, detail="Question is required.")
 
         cached_page = get_cached_page(normalized_url)
@@ -28,15 +33,26 @@ async def ask_page(request: AskRequest):
             )
 
         content = cached_page["content"]
-        answer = answer_question(content, question)
+        summary = cached_page.get("summary")
+        page_type = cached_page.get("page_type")
+        structured_data = cached_page.get("structured_data")
 
-        return AskResponse(
-            url=normalized_url,
-            question=question,
-            answer=answer,
-            cached=True,
-            content_length=len(content),
+        answer = answer_question(
+            content=content,
+            question=cleaned_question,
+            summary=summary,
+            page_type=page_type,
+            structured_data=structured_data,
         )
+
+        return {
+            "url": normalized_url,
+            "question": cleaned_question,
+            "answer": answer,
+            "cached": True,
+            "content_length": len(content),
+            "page_type": page_type,
+        }
 
     except HTTPException:
         raise
