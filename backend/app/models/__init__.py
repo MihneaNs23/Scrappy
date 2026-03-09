@@ -1,0 +1,1 @@
+# Makes app.models a package.
